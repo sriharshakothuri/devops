@@ -1,0 +1,403 @@
+#! /bin/bash
+
+
+hostname=`uname -n`
+port_entry='nscp 5667/tcp'
+SUDO_PATH=`sudo -V | grep -i "Sudoers path:" | awk -F':' '{print $2}' | awk '{print $1}'`
+port_num=`netstat -anp | grep 5667 | grep -i listen | awk 'BEGIN{FS=":"}{print $1,$2}' | awk 'BEGIN{RS=" "}/5667/{print $1,$2}'`
+process_name=`netstat -anp | grep 5667 | grep -i listen | awk 'BEGIN{FS=":"}{print $3}' | awk 'BEGIN{FS="/"}{print $2}'`
+
+###Functions###
+
+Install_sub_SuSe_func ()
+{
+                if [[ `zypper -n --no-gpg-checks se nscp | awk 'BEGIN{FS="|"}/nscp/{print $2,$NF}'| awk 'BEGIN{RS=""}{print $1,$2}' | cut -d " " -f1 2> /dev/null` == nscp ]]
+                        then
+                        zypper -n install nscp &> /dev/null
+                                if [ $? = 0 ]
+                                        then
+                                        echo -e '\tnscp installed succesfully\n'
+                                else
+                                        echo -e '\tWarning nscp installation needs manual intervention, please check\n'
+                                fi
+                                if [[ `awk '/nscp/ {print $1,$2}' /etc/services` == $port_entry ]]
+                                        then
+                                        echo -e '\tPort entry is already present:' $port_entry'\n'
+                                else
+                                        echo -e '\tAdding the port:' $port_entry 'in services file\n'
+                                        echo "nscp              5667/tcp" >> /etc/services
+                                fi
+                                sleep 2
+                        service nsclient start 2> /dev/null
+
+portnum_install=`netstat -anp | grep 5667 | grep -i listen | awk 'BEGIN{FS=":"}{print $1,$2}' | awk 'BEGIN{RS=" "}/5667/{print $1,$2}'`
+process_name_install=`netstat -anp | grep 5667 | grep -i listen | awk 'BEGIN{FS=":"}{print $3}' | awk 'BEGIN{FS="/"}{print $2}'`
+
+                                if [[ `echo $portnum_install` -eq 5667 && `echo $process_name_install` -eq nscp ]]
+                                        then
+                                        echo -e "\tPort" $portnum_install "is listening and service is started\n"
+                                else
+                                        echo -e "\tWarning: Port is not litening, Manual intervention is required\n"
+                                fi
+                        else
+                        echo -e '\tWarning: nscp package not found, Manual intervention required\n'
+                fi
+}
+
+Install_SuSe_func ()
+{
+reponame=`zypper lr | awk  'BEGIN{FS="|";OFS=""}/CPS/{print $2,$NF}' | awk 'BEGIN{OFS=" "}{print $1,$2}' | cut -d " " -f1`
+ref_status=`zypper lr | awk  'BEGIN{FS="|";OFS=""}/CPS/{print $2,$NF}' | awk 'BEGIN{OFS=" "}{print $1,$2}' | cut -d " " -f2`
+
+        if [[ $reponame == "repo name" && $ref_status == Yes ]]
+                then
+                echo -e '\tAdded the repo and refreshed zypper, searching nscp installation package\n'
+                Install_sub_SuSe_func
+        elif [[ $? -eq 0 ]] || [[ `zypper -n --no-gpg-checks se nscp | awk 'BEGIN{FS="|"}/nscp/{print $2,$NF}'| awk 'BEGIN{RS=""}{print $1,$2}' | cut -d " " -f1 2> /dev/null` == nscp ]]
+                then
+                echo -e '\tRefreshing the zypper not complete, still continuing with the installation\n'
+                Install_sub_SuSe_func
+        else
+                echo -e '\tWarning: Repo not mounted or zypper not refreshed, Please check\n'
+        fi
+        sudo_func
+}
+        #Sudo entry for nagios user
+
+
+sudo_func ()
+{
+        if [ -f $SUDO_PATH ]
+                then
+                        echo -e "\tSudo is installed on the server\n"
+                        printf 'nagios  ALL=(root)  NOPASSWD: /usr/share/nsclient/scripts/, /usr/share/nsclient/scripts/perfdata/bin/, /usr/share/nsclient/scripts/perfdata/var/, /usr/share/nsclient/scripts/perfdata/libexec/, /usr/share/nsclient/scripts/perfdata/libexec/perf/\nDefaults:nagios !requiretty\n' > /tmp/sudofornagios
+                if [ $? != 0 ]
+                        then
+                        echo -e "\tNot able create the file in tmp directory\n"
+                        else
+                        nagiossudopart1=`cat /tmp/sudofornagios | grep \^nagios`
+                        nagiossudopart2=`cat /tmp/sudofornagios | grep requiretty\$`
+						sudoersfilematchpart1=`cat $SUDO_PATH | grep -v '#' |  grep \^nagios | grep ALL`
+						sudoersfilematchpart2=`cat $SUDO_PATH | grep -v '#' | grep requiretty\$ |  grep \^Defaults:nagios`
+						echo -e "\tChecking the sudo entry for nagios user\n"
+                        if [ "$nagiossudopart1" = "$sudoersfilematchpart1" -a "$nagiossudopart2" = "$sudoersfilematchpart2" ]
+                                then
+                                echo -e "\tSudo entry is there for nagios user\n"
+                                rm -rf /tmp/sudofornagios
+                        else
+                                echo -e "\tSudo entry is not present, adding sudo entry for nagios user\n"
+                                printf 'nagios  ALL=(root)  NOPASSWD: /usr/share/nsclient/scripts/, /usr/share/nsclient/scripts/perfdata/bin/, /usr/share/nsclient/scripts/perfdata/var/, /usr/share/nsclient/scripts/perfdata/libexec/, /usr/share/nsclient/scripts/perfdata/libexec/perf/\nDefaults:nagios !requiretty\n' >> $SUDO_PATH
+                                rm -rf /tmp/sudofornagios
+                                echo -e "\tSudo entry added\n"
+                        fi
+                fi
+                else
+                        echo -e "\t*****Sudo is not installed in the server, Please install sudo"
+        fi
+}
+
+Install_redhat_func ()
+{
+reponame=$(yum repolist | awk '{print $1}' | grep Monitoring)
+        yum install yum-utils -y &> /dev/null
+
+        if [[ $reponame == "<add the repo >" ]]
+                then
+                        echo -e '\tThe repository is added successfully, Proceeding with the installtion\n'
+                        yum install --nogpgcheck nscp -y &> /dev/null
+                        service nsclient start 2> /dev/null
+portnum_install=`netstat -anp | grep 5667 | grep -i listen | awk 'BEGIN{FS=":"}{print $1,$2}' | awk 'BEGIN{RS=" "}/5667/{print $1,$2}'`
+process_name_install=`netstat -anp | grep 5667 | grep -i listen | awk 'BEGIN{FS=":"}{print $3}' | awk 'BEGIN{FS="/"}{print $2}'`
+                if [[ `echo $portnum_install` -eq 5667 && `echo $process_name_install` -eq nscp ]]
+                                        then
+                                        echo -e "\tPort" $portnum_install "is listening and service is started\n"
+                        else
+                                        echo -e "\tWarning: Port is not litening, Manual intervention is required\n"
+                fi
+        else
+                echo -e '\tThe repository is not added, Manual intervention required\n'
+        fi
+        sudo_func
+}
+
+
+suse_11_3 ()
+{
+        echo Date: `date`
+        echo Hostname: $hostname
+        echo -e '\tAdding Repository to the host and refreshing zypper\n'
+        zypper --non-interactive --quiet addrepo --refresh "<add the repo >" &> /dev/null
+        Install_SuSe_func
+        }
+
+suse_11_4 ()
+{
+        echo Date: `date`
+        echo Hostname: $hostname
+        echo -e '\tAdding Repository to the host and refreshing zypper\n'
+        zypper --non-interactive --quiet addrepo --refresh "<add the repo >" &> /dev/null
+        Install_SuSe_func
+        }
+
+
+suse_12_1 ()
+{
+        echo Date: `date`
+        echo Hostname: $hostname
+        echo -e '\tAdding Repository to the host and refreshing zypper\n'
+        zypper --non-interactive --quiet addrepo --refresh "<add the repo >" &> /dev/null
+        Install_SuSe_func
+        }
+
+suse_12_2 ()
+{
+        echo Date: `date`
+        echo Hostname: $hostname
+        echo -e '\tAdding Repository to the host and refreshing zypper\n'
+        zypper --non-interactive --quiet addrepo --refresh "<add the repo >" &> /dev/null
+        Install_SuSe_func
+        }
+
+suse_12_3 ()
+{
+        echo Date: `date`
+        echo Hostname: $hostname
+        echo -e '\tAdding Repository to the host and refreshing zypper\n'
+        zypper --non-interactive --quiet addrepo --refresh "<add the repo >" &> /dev/null
+        Install_SuSe_func
+        }
+
+suse_12_4 ()
+{
+        echo Date: `date`
+        echo Hostname: $hostname
+        echo -e '\tAdding Repository to the host and refreshing zypper\n'
+        zypper --non-interactive --quiet addrepo --refresh "<add the repo >" &> /dev/null
+        Install_SuSe_func
+        }
+
+suse_15 ()
+{
+        echo Date: `date`
+        echo Hostname: $hostname
+        echo -e '\tAdding Repository to the host and refreshing zypper\n'
+        zypper --non-interactive --quiet addrepo --refresh "<add the repo >" &> /dev/null
+        Install_SuSe_func
+        }
+
+redhat_6 ()
+{
+        echo Date: `date`
+        echo Hostname: $hostname
+        echo -e '\tAdding Repository to the host and refreshing zypper\n'
+
+}
+
+redhat_7 ()
+{
+        echo Date: `date`
+        echo Hostname: $hostname
+        echo -e '\tAdding Repository to the host and refershing yum\n'
+        yum-config-manager --add-repo "<add the repo >" &> /dev/null
+        Install_redhat_func
+}
+
+check_scripts_download ()
+{
+which wget &> /dev/null
+wget_status=$?
+if [ $wget_status -eq 0 ]
+	then
+	wget < where scripts are present > &> /dev/null
+	if [ -f Check_Scripts.zip ]
+		then
+		echo -e "\tcheck_scripts.zip downloaded successfully\n"
+		mkdir -p /usr/share/nsclient/scripts
+		unzip -qjo Check_Scripts.zip "Check_Scripts/LabsIT_Std_Premium/Linux/*" -d /usr/share/nsclient/scripts/
+		chown -R nagios /usr/share/nsclient/scripts/
+		chmod -R a+x /usr/share/nsclient/
+		echo -e "\tcheck_scripts copied succesfully\n"
+		rm -f Check_Scripts.zip
+	else
+		echo -e "\t check_scripts.zip is not downloaded, Please check"
+		exit 2
+	fi
+else
+	echo -e "\twget not installed, Install wget and try again\n"
+fi
+}
+
+check_config_files ()
+{
+wget < where scripts are present > &> /dev/null
+if [ -f Config_Files.zip ]
+	then
+	echo -e "\tConfig_Files.zip downloaded successfully\n"
+	mkdir -p /etc/nsclient/security/
+	unzip -qjo Config_Files.zip "Config_Files/Linux/nsclient.ini" -d /etc/nsclient/
+	unzip -qjo Config_Files.zip "Config_Files/Linux/*.pem" -d /etc/nsclient/security/
+	unzip -qjo Config_Files.zip "Config_Files/Linux/*.cer" -d /etc/nsclient/security/
+	unzip -qjo Config_Files.zip "Config_Files/Linux/*.crt" -d /etc/nsclient/security/
+	unzip -qjo Config_Files.zip "Config_Files/Linux/*.key" -d /etc/nsclient/security/
+	chown -R nagios:nagios /etc/nsclient/
+	echo -e "\tConfig_Files copied succesfully\n"
+	rm -f Check_Scripts.zip
+else
+	echo -e "\tcheck_scripts.zip is not downloaded, Please check"
+	exit 2
+fi
+}	
+
+perfdata_check ()
+{
+wget < where scripts are present > &> /dev/null
+if [ -f Perfdata.zip ]
+then
+	echo -e "\tPerfdata.zip downloaded succesfully\n"
+	mkdir -p /usr/share/nsclient/scripts/perfdata/bin/
+	mkdir -p /usr/share/nsclient/scripts/perfdata/etc/
+	mkdir -p /usr/share/nsclient/scripts/perfdata/libexec/perf
+	mkdir -p /usr/share/nsclient/scripts/perfdata/var/
+	unzip -qjo Perfdata.zip "Perfdata/Linux/bin/*" -d /usr/share/nsclient/scripts/perfdata/bin/
+	unzip -qjo Perfdata.zip "Perfdata/Linux/etc/*" -d /usr/share/nsclient/scripts/perfdata/etc/
+	unzip -qjo Perfdata.zip "Perfdata/Linux/var/*" -d /usr/share/nsclient/scripts/perfdata/var/
+	unzip -qjo Perfdata.zip "Perfdata/Linux/libexec/check_counters.pl" -d /usr/share/nsclient/scripts/perfdata/libexec/
+	unzip -qjo Perfdata.zip "Perfdata/Linux/libexec/PerfOSVariables.pm" -d /usr/share/nsclient/scripts/perfdata/libexec/
+	unzip -qjo Perfdata.zip "Perfdata/Linux/libexec/perf/*" -d /usr/share/nsclient/scripts/perfdata/libexec/perf	
+	unzip -qjo Perfdata.zip "Perfdata/Linux/README.md" -d /usr/share/nsclient/scripts/perfdata/
+	echo -e "\tPerfdata_checks copied succesfully\n"
+	chown -R nagios:nagios /usr/share/nsclient/
+	chmod -R a+x /usr/share/nsclient/
+	rm -f Perfdata.zip
+else
+	echo -e "\tPerfdata.zip is not downloaded, Please check"
+	exit 2
+fi
+}
+
+
+####################Main script######
+
+
+if [[ `echo $port_num` -eq "5667" && `echo $process_name` == nscp ]]
+then
+echo -e "\tPort" $port_num "is listening and service is started. Hence skipping the installation, will try copying the scripts\n"
+check_scripts_download
+check_config_files
+perfdata_check
+service nsclient restart
+exit 0
+fi
+
+
+if [ -f /etc/redhat-release ]
+then
+        echo Redhat
+        os=`echo redhat`
+        elif [ -f /etc/SuSE-release ]
+then
+        os=`echo suse`
+else
+        echo "Unknown OS Version"
+fi
+
+if [ $os = "suse" ]
+then
+if [ -f /etc/SuSE-release ]
+then
+                os_version=`cat /etc/SuSE-release  | head -1`
+                os_patch=`cat /etc/SuSE-release  | grep -i patch | awk 'BEGIN{FS="= *"} {print $2}'`
+                if echo $os_version | grep -i " 10" > /dev/null 2> /dev/null
+                then
+                        suse_10 | tee -a /tmp/test
+                elif echo $os_version | grep -i " 11" > /dev/null 2> /dev/null
+                then
+                        if [ $os_patch -eq 1 ]
+                        then
+                                suse_11_1 | tee -a /tmp/test
+                        elif [ $os_patch -eq 2 ]
+                        then
+                                suse_11_2 | tee -a /tmp/test
+                        elif [ $os_patch -eq 3 ]
+                        then
+                                suse_11_3 | tee -a /tmp/test
+                        else
+                                suse_11_4 | tee -a /tmp/test
+                        fi
+                elif echo $os_version | grep -i " 12" > /dev/null 2> /dev/null
+                then
+                                                if [ $os_patch -eq 1 ]
+                        then
+                                suse_12_1 | tee -a /tmp/test
+                        elif [ $os_patch -eq 2 ]
+                        then
+                                suse_12_2 | tee -a /tmp/test
+                        elif [ $os_patch -eq 3 ]
+                        then
+                                suse_12_3 | tee -a /tmp/test
+                        else
+                                suse_12_4 | tee -a /tmp/test
+                                                fi
+                elif echo $os_version | grep -i " 15" > /dev/null 2> /dev/null
+                then
+                        suse_15 | tee -a /tmp/test
+                else
+                                        echo "Unknown Version"
+                        exit 1
+                fi
+        else
+                os_version=`cat /etc/os-release | grep -i pretty | awk -F'= *' '{print $2}' | sed 's/\"//g'`
+                if echo $os_version | grep -i " 10" > /dev/null 2> /dev/null
+                then
+                        suse_10 | tee -a /tmp/test
+                elif echo $os_version | grep -i " 11" > /dev/null 2> /dev/null
+                then
+                        if echo $os_version | grep -i " SP1" > /dev/null 2> /dev/null
+                        then
+                                suse_11_1 | tee -a /tmp/test
+                        elif echo $os_version | grep -i " SP2" > /dev/null 2> /dev/null
+                        then
+                                suse_11_2 | tee -a /tmp/test
+                        elif echo $os_version | grep -i " SP3" > /dev/null 2> /dev/null
+                        then
+                                suse_11_3 | tee -a /tmp/test
+                        else
+                                suse_11_4 | tee -a /tmp/test
+                        fi
+                elif  echo $os_version | grep -i " 12" > /dev/null 2> /dev/null
+                then
+                        suse_12 | tee -a /tmp/test
+                elif  echo $os_version | grep -i " 15" > /dev/null 2> /dev/null
+                then
+                        suse_15 | tee -a /tmp/test
+                else
+                        echo "Unknown Version"
+                        exit 1
+                fi
+        fi
+fi
+
+if [ $os == "redhat" ]
+then
+        os_version=`cat /etc/redhat-release`
+        if echo $os_version | grep -i ' 5' > /dev/null 2> /dev/null
+        then
+             echo   redhat_5 | tee -a /tmp/test
+        elif echo $os_version | grep -i ' 6' > /dev/null 2> /dev/null
+        then
+             echo   redhat_6 | tee -a /tmp/test
+        elif echo $os_version | grep -i ' 7' > /dev/null 2> /dev/null
+        then
+                                        redhat_7 | tee -a /tmp/test
+        else
+                echo "Unknown version RHC $os_version"
+                exit 1 ;
+        fi
+fi
+
+check_scripts_download
+check_config_files
+perfdata_check
+service nsclient restart
+
+sleep 10
